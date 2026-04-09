@@ -194,9 +194,11 @@ var RSSDailyTranslator = {
   async function runNow(source) {
     log("runNow called from: " + source);
 
+    const runStartedAt = new Date();
+
     const summary = {
       source,
-      startTime: new Date().toISOString(),
+      startTime: runStartedAt.toISOString(),
       feedsProcessed: 0,
       feedsFailed: 0,
       itemsFound: 0,
@@ -207,6 +209,7 @@ var RSSDailyTranslator = {
       itemsQueued: 0,
       cleanupMarked: 0,
       cleanupDeleted: 0,
+      cleanupCollectionsDeleted: 0,
       cleanupRestored: 0,
       cleanupSkipped: "",
       errors: [],
@@ -216,6 +219,11 @@ var RSSDailyTranslator = {
     const seenSourceKeys = new Set();
 
     try {
+      const runCollections = await prepareRunCollections(runStartedAt);
+      if (runCollections?.runCollection) {
+        summary.newItemsCollection = runCollections.runCollection.name;
+      }
+
       const feedsText = getPref("feeds", "");
       const feeds = feedsText
         .split("\n")
@@ -243,7 +251,7 @@ var RSSDailyTranslator = {
                 seenSourceKeys.add(sourceKey);
               }
 
-              const result = await createZoteroItem(item);
+              const result = await createZoteroItem(item, runCollections);
               if (result && result.created) {
                 summary.itemsCreated++;
               } else {
@@ -417,6 +425,7 @@ var RSSDailyTranslator = {
     const lines = [
       "来源: " + (summary.source || "unknown"),
       "开始时间: " + (summary.startTime || "-"),
+      "新增批次集合: " + (summary.newItemsCollection || "-"),
       "处理源数: " + (summary.feedsProcessed || 0),
       "抓取失败源: " + (summary.feedsFailed || 0),
       "抓取条目: " + (summary.itemsFound || 0),
@@ -427,7 +436,9 @@ var RSSDailyTranslator = {
       "重试入队: " + (summary.itemsQueued || 0),
       "清理标记: " + (summary.cleanupMarked || 0),
       "清理恢复: " + (summary.cleanupRestored || 0),
+      "清理移出父集合: " + (summary.cleanupRemovedFromParent || 0),
       "清理删除: " + (summary.cleanupDeleted || 0),
+      "清理空集合: " + (summary.cleanupCollectionsDeleted || 0),
       "清理跳过: " + (summary.cleanupSkipped || "-"),
       "错误数: " + ((summary.errors && summary.errors.length) || 0),
       "结束时间: " + (summary.endTime || "-"),
@@ -698,13 +709,12 @@ var RSSDailyTranslator = {
 
   // ============ Zotero Item Creation ============
 
-  async function createZoteroItem(feedItem) {
+  async function createZoteroItem(feedItem, runCollections = null) {
     log("Creating Zotero item for: " + feedItem.title);
 
-    const parentCollectionName = (getPref("targetParentCollection", "每日RSS论文") || "").trim() || "每日RSS论文";
-    const parentCollection = await getOrCreateCollection(parentCollectionName);
+    const parentCollection = runCollections?.parentCollection || await getOrCreateParentCollection();
     if (!parentCollection) {
-      throw new Error("无法创建或获取目标集合: " + parentCollectionName);
+      throw new Error("无法创建或获取目标集合");
     }
 
     const targetLibraryID = parentCollection.libraryID;
@@ -783,6 +793,7 @@ var RSSDailyTranslator = {
 
     await item.saveTx();
     await ensureItemInCollection(item, parentCollection);
+    await ensureItemInRunCollection(item, parentCollection, runCollections?.runCollection || null);
     ensureManagedMetadata(item, feedItem);
     await item.saveTx();
     log("Item created: " + item.key);
@@ -930,6 +941,50 @@ var RSSDailyTranslator = {
     }
 
     return false;
+  }
+
+  async function ensureItemInRunCollection(item, parentCollection, runCollection = null) {
+    if (!item || !parentCollection) {
+      return false;
+    }
+
+    let targetCollection = runCollection;
+    if (!targetCollection) {
+      targetCollection = await getOrCreateChildCollection(parentCollection, getRunCollectionName());
+      if (!targetCollection) {
+        return false;
+      }
+    }
+
+    return ensureItemInCollection(item, targetCollection);
+  }
+
+  function getRunCollectionName(date = new Date()) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    const hour = String(date.getHours()).padStart(2, "0");
+    const minute = String(date.getMinutes()).padStart(2, "0");
+    return `${year}${month}${day}-${hour}${minute}`;
+  }
+
+  async function getOrCreateParentCollection() {
+    const parentCollectionName = (getPref("targetParentCollection", "每日RSS论文") || "").trim() || "每日RSS论文";
+    return getOrCreateCollection(parentCollectionName);
+  }
+
+  async function prepareRunCollections(runStartedAt = new Date()) {
+    const parentCollection = await getOrCreateParentCollection();
+    if (!parentCollection) {
+      return null;
+    }
+
+    const runCollection = await getOrCreateChildCollection(parentCollection, getRunCollectionName(runStartedAt));
+    if (!runCollection) {
+      return { parentCollection, runCollection: null };
+    }
+
+    return { parentCollection, runCollection };
   }
 
   async function findExistingItem(feedItem, libraryID = null, collectionID = null) {
@@ -1086,8 +1141,7 @@ var RSSDailyTranslator = {
       return;
     }
 
-    const parentCollectionName = (getPref("targetParentCollection", "每日RSS论文") || "").trim() || "每日RSS论文";
-    const parentCollection = await getOrCreateCollection(parentCollectionName);
+    const parentCollection = await getOrCreateParentCollection();
     if (!parentCollection) {
       if (summary) {
         summary.cleanupSkipped = "no_collection";
@@ -1108,6 +1162,7 @@ var RSSDailyTranslator = {
     const managedKeys = new Set();
     let markedCount = 0;
     let deletedCount = 0;
+    let removedFromParentCount = 0;
     let restoredCount = 0;
 
     for (const item of childItems) {
@@ -1152,9 +1207,19 @@ var RSSDailyTranslator = {
       }
 
       if (now - missingSince >= cleanupDelayMs) {
-        await item.eraseTx();
+        if (hasExternalCollectionMembership(item, parentCollection)) {
+          const removed = await removeItemFromParentHierarchy(item, parentCollection);
+          if (removed) {
+            removedFromParentCount++;
+          } else {
+            log("Skip deleting item due to failed hierarchy removal: " + (item.key || item.id));
+            continue;
+          }
+        } else {
+          await item.eraseTx();
+          deletedCount++;
+        }
         delete missingMap[sourceKey];
-        deletedCount++;
       }
     }
 
@@ -1166,9 +1231,13 @@ var RSSDailyTranslator = {
 
     saveCleanupMissingMap(missingMap);
 
+    const cleanedCollections = await pruneEmptyManagedCollections(parentCollection);
+
     if (summary) {
       summary.cleanupMarked = markedCount;
       summary.cleanupDeleted = deletedCount;
+      summary.cleanupRemovedFromParent = removedFromParentCount;
+      summary.cleanupCollectionsDeleted = cleanedCollections;
       summary.cleanupRestored = restoredCount;
     }
   }
@@ -1202,6 +1271,174 @@ var RSSDailyTranslator = {
 
     log("Collection created: " + name);
     return newCollection;
+  }
+
+  async function getOrCreateChildCollection(parentCollection, childName) {
+    if (!parentCollection || !childName) {
+      return null;
+    }
+
+    const parentID = parentCollection.id || parentCollection.collectionID;
+    if (!parentID) {
+      return null;
+    }
+
+    const libraryID = parentCollection.libraryID;
+    const collections = Zotero.Collections.getByLibrary(libraryID);
+    for (const collection of collections) {
+      const collectionParentID = collection.parentID || collection.parentCollectionID;
+      if (collection.name === childName && collectionParentID === parentID) {
+        return collection;
+      }
+    }
+
+    const newCollection = new Zotero.Collection();
+    newCollection.libraryID = libraryID;
+    newCollection.parentID = parentID;
+    newCollection.name = childName;
+    await newCollection.saveTx();
+    log("Child collection created: " + childName);
+    return newCollection;
+  }
+
+  function isCollectionUnderParent(collectionID, parentCollectionID) {
+    if (!collectionID || !parentCollectionID) {
+      return false;
+    }
+
+    let currentID = collectionID;
+    while (currentID) {
+      if (currentID === parentCollectionID) {
+        return true;
+      }
+
+      const collection = Zotero.Collections.get(currentID);
+      if (!collection) {
+        break;
+      }
+
+      currentID = collection.parentID || collection.parentCollectionID || null;
+    }
+
+    return false;
+  }
+
+  function hasExternalCollectionMembership(item, parentCollection) {
+    if (!item || !parentCollection || typeof item.getCollections !== "function") {
+      return false;
+    }
+
+    const parentID = parentCollection.id || parentCollection.collectionID;
+    const collections = item.getCollections();
+    if (!Array.isArray(collections) || collections.length === 0) {
+      return false;
+    }
+
+    for (const collectionID of collections) {
+      if (!collectionID || collectionID === parentID) {
+        continue;
+      }
+
+      if (!isCollectionUnderParent(collectionID, parentID)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  async function removeItemFromParentHierarchy(item, parentCollection) {
+    if (!item || !parentCollection) {
+      return false;
+    }
+
+    const current = typeof item.getCollections === "function" ? item.getCollections() : [];
+    if (!Array.isArray(current) || current.length === 0) {
+      return false;
+    }
+
+    const parentID = parentCollection.id || parentCollection.collectionID;
+    if (!parentID) {
+      return false;
+    }
+
+    const nextCollections = current.filter((id) => !isCollectionUnderParent(id, parentID));
+    if (nextCollections.length === current.length) {
+      return false;
+    }
+
+    item.setCollections(nextCollections);
+    await item.saveTx();
+    return true;
+  }
+
+  async function pruneEmptyManagedCollections(parentCollection) {
+    if (!parentCollection) {
+      return 0;
+    }
+
+    const parentID = parentCollection.id || parentCollection.collectionID;
+    if (!parentID) {
+      return 0;
+    }
+
+    const libraryID = parentCollection.libraryID;
+    const collections = Zotero.Collections.getByLibrary(libraryID);
+    const descendants = collections.filter((collection) => {
+      const collectionID = collection.id || collection.collectionID;
+      return collectionID && collectionID !== parentID && isCollectionUnderParent(collectionID, parentID);
+    });
+
+    descendants.sort((a, b) => getCollectionDepth(b) - getCollectionDepth(a));
+
+    let deletedCount = 0;
+    for (const collection of descendants) {
+      const name = (collection.name || "").trim();
+      if (!isManagedGeneratedCollectionName(name)) {
+        continue;
+      }
+
+      if (!isCollectionEffectivelyEmpty(collection)) {
+        continue;
+      }
+
+      await collection.eraseTx();
+      deletedCount++;
+    }
+
+    return deletedCount;
+  }
+
+  function getCollectionDepth(collection) {
+    let depth = 0;
+    let currentID = collection?.parentID || collection?.parentCollectionID || null;
+    while (currentID) {
+      depth++;
+      const current = Zotero.Collections.get(currentID);
+      if (!current) {
+        break;
+      }
+      currentID = current.parentID || current.parentCollectionID || null;
+    }
+    return depth;
+  }
+
+  function isManagedGeneratedCollectionName(name) {
+    return /^\d{8}-\d{4}$/.test(name);
+  }
+
+  function isCollectionEffectivelyEmpty(collection) {
+    if (!collection) {
+      return true;
+    }
+
+    const directChildren = typeof collection.getChildCollections === "function" ? collection.getChildCollections() : [];
+    if (Array.isArray(directChildren) && directChildren.length > 0) {
+      return false;
+    }
+
+    const directItems = typeof collection.getChildItems === "function" ? collection.getChildItems() : [];
+    return !Array.isArray(directItems) || directItems.length === 0;
   }
 
   // ============ Translation ============
