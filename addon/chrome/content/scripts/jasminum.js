@@ -849,6 +849,14 @@ var RSSDailyTranslator = {
       return false;
     }
 
+    // Check if "translate English only" is enabled
+    const translateEnglishOnly = getPref("translateEnglishOnly", true);
+    if (translateEnglishOnly && isChinese(srcTitle)) {
+      // If only translating English content and the title is Chinese, skip it
+      log("Title is Chinese and 'translate English only' is enabled, skipping");
+      return false;
+    }
+
     const titleTranslation = getTitleTranslationField(item);
     if (!titleTranslation) {
       return true;
