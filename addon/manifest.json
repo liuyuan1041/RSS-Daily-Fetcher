@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "RSS论文接收器",
-  "version": "1.0.26",
+  "version": "1.0.27",
   "description": "每日自动翻译 RSS 论文标题和摘要",
   "homepage_url": "https://github.com/MuiseDestiny/zotero-gpt",
   "author": "LY",

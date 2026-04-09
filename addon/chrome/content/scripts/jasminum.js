@@ -157,6 +157,7 @@ var RSSDailyTranslator = {
   // ============ Scheduler ============
 
   let _timer = null;
+  let _runInProgress = false;
 
   function scheduleNextRun() {
     clearTimer();
@@ -172,6 +173,12 @@ var RSSDailyTranslator = {
     _timer.initWithCallback(
       {
         notify: async () => {
+          if (isRunInProgress()) {
+            log("Timer fired but previous run is still in progress, skip this cycle");
+            scheduleNextRun();
+            return;
+          }
+
           log("Timer fired, running now");
           await runNow("scheduler");
           scheduleNextRun();
@@ -189,127 +196,160 @@ var RSSDailyTranslator = {
     }
   }
 
+  function isRunInProgress() {
+    return _runInProgress;
+  }
+
   // ============ Main Processing ============
 
   async function runNow(source) {
-    log("runNow called from: " + source);
-
-    const runStartedAt = new Date();
-
-    const summary = {
-      source,
-      startTime: runStartedAt.toISOString(),
-      feedsProcessed: 0,
-      feedsFailed: 0,
-      itemsFound: 0,
-      itemsCreated: 0,
-      itemsExisting: 0,
-      itemsUpdated: 0,
-      itemsTranslated: 0,
-      itemsQueued: 0,
-      cleanupMarked: 0,
-      cleanupDeleted: 0,
-      cleanupCollectionsDeleted: 0,
-      cleanupRestored: 0,
-      cleanupSkipped: "",
-      errors: [],
-    };
-
-    const translationQueue = new Map();
-    const seenSourceKeys = new Set();
-
-    try {
-      const runCollections = await prepareRunCollections(runStartedAt);
-      if (runCollections?.runCollection) {
-        summary.newItemsCollection = runCollections.runCollection.name;
-      }
-
-      const feedsText = getPref("feeds", "");
-      const feeds = feedsText
-        .split("\n")
-        .map((f) => f.trim())
-        .filter((f) => f.startsWith("http"));
-
-      summary.feedsProcessed = feeds.length;
-
-      if (feeds.length === 0) {
-        summary.errors.push("No feeds configured");
-        updateSummaryData(summary);
-        return summary;
-      }
-
-      for (const feedUrl of feeds) {
-        try {
-          log("Processing feed: " + feedUrl);
-          const items = await fetchFeed(feedUrl);
-          summary.itemsFound += items.length;
-
-          for (const item of items) {
-            try {
-              const sourceKey = buildSourceKey(item);
-              if (sourceKey) {
-                seenSourceKeys.add(sourceKey);
-              }
-
-              const result = await createZoteroItem(item, runCollections);
-              if (result && result.created) {
-                summary.itemsCreated++;
-              } else {
-                summary.itemsExisting++;
-                if (result && result.updated) {
-                  summary.itemsUpdated++;
-                }
-              }
-
-              const itemKey = result?.item?.key || result?.item?.id;
-              if (itemKey && result?.item) {
-                translationQueue.set(itemKey, {
-                  item: result.item,
-                  sourceTitle: item.title || "",
-                });
-              }
-            } catch (e) {
-              const msg = item.title ? (item.title + ": " + e.message) : e.message;
-              summary.errors.push(feedUrl + " -> " + msg);
-              enqueueRetry(feedUrl, item, e.message);
-              summary.itemsQueued++;
-            }
-          }
-        } catch (e) {
-          log("Error processing feed " + feedUrl + ": " + e);
-          summary.errors.push(feedUrl + ": " + e.message);
-          summary.feedsFailed++;
-        }
-      }
-
-      // Phase 2: translate titles after fetch/ingest is fully completed.
-      for (const entry of translationQueue.values()) {
-        try {
-          const translated = await translateTitleForItem(entry.item, entry.sourceTitle);
-          if (translated) {
-            summary.itemsTranslated++;
-          }
-        } catch (e) {
-          const title = entry?.sourceTitle || entry?.item?.getField?.("title") || "(untitled)";
-          summary.errors.push("translate -> " + title + ": " + e.message);
-        }
-      }
-
-      if (summary.feedsFailed === 0) {
-        await cleanupStaleItems(seenSourceKeys, summary);
-      } else {
-        summary.cleanupSkipped = "feeds_failed";
-      }
-    } catch (e) {
-      log("Error in runNow: " + e);
-      summary.errors.push(e.message);
-      Zotero.logError(e);
+    if (_runInProgress) {
+      log("runNow skipped because another run is in progress, source=" + source);
+      return {
+        source,
+        startTime: new Date().toISOString(),
+        endTime: new Date().toISOString(),
+        feedsProcessed: 0,
+        feedsFailed: 0,
+        itemsFound: 0,
+        itemsCreated: 0,
+        itemsExisting: 0,
+        itemsUpdated: 0,
+        itemsTranslated: 0,
+        itemsQueued: 0,
+        cleanupMarked: 0,
+        cleanupDeleted: 0,
+        cleanupCollectionsDeleted: 0,
+        cleanupRestored: 0,
+        cleanupSkipped: "busy",
+        retryQueueSize: loadRetryQueue().length,
+        errors: [],
+      };
     }
 
-    summary.endTime = new Date().toISOString();
-    summary.retryQueueSize = loadRetryQueue().length;
-    updateSummaryData(summary);
-    return summary;
+    _runInProgress = true;
+    try {
+      log("runNow called from: " + source);
+
+      const runStartedAt = new Date();
+
+      const summary = {
+        source,
+        startTime: runStartedAt.toISOString(),
+        feedsProcessed: 0,
+        feedsFailed: 0,
+        itemsFound: 0,
+        itemsCreated: 0,
+        itemsExisting: 0,
+        itemsUpdated: 0,
+        itemsTranslated: 0,
+        itemsQueued: 0,
+        cleanupMarked: 0,
+        cleanupDeleted: 0,
+        cleanupCollectionsDeleted: 0,
+        cleanupRestored: 0,
+        cleanupSkipped: "",
+        errors: [],
+      };
+
+      const translationQueue = new Map();
+      const seenSourceKeys = new Set();
+
+      try {
+        const runCollections = await prepareRunCollections(runStartedAt);
+        if (runCollections?.runCollection) {
+          summary.newItemsCollection = runCollections.runCollection.name;
+        }
+
+        const feedsText = getPref("feeds", "");
+        const feeds = feedsText
+          .split("\n")
+          .map((f) => f.trim())
+          .filter((f) => f.startsWith("http"));
+
+        summary.feedsProcessed = feeds.length;
+
+        if (feeds.length === 0) {
+          summary.errors.push("No feeds configured");
+          updateSummaryData(summary);
+          return summary;
+        }
+
+        for (const feedUrl of feeds) {
+          try {
+            log("Processing feed: " + feedUrl);
+            const items = await fetchFeed(feedUrl);
+            summary.itemsFound += items.length;
+
+            for (const item of items) {
+              try {
+                const sourceKey = buildSourceKey(item);
+                if (sourceKey) {
+                  seenSourceKeys.add(sourceKey);
+                }
+
+                const result = await createZoteroItem(item, runCollections);
+                if (result && result.created) {
+                  summary.itemsCreated++;
+                } else {
+                  summary.itemsExisting++;
+                  if (result && result.updated) {
+                    summary.itemsUpdated++;
+                  }
+                }
+
+                const itemKey = result?.item?.key || result?.item?.id;
+                if (itemKey && result?.item) {
+                  translationQueue.set(itemKey, {
+                    item: result.item,
+                    sourceTitle: item.title || "",
+                  });
+                }
+              } catch (e) {
+                const msg = item.title ? (item.title + ": " + e.message) : e.message;
+                summary.errors.push(feedUrl + " -> " + msg);
+                enqueueRetry(feedUrl, item, e.message);
+                summary.itemsQueued++;
+              }
+            }
+          } catch (e) {
+            log("Error processing feed " + feedUrl + ": " + e);
+            summary.errors.push(feedUrl + ": " + e.message);
+            summary.feedsFailed++;
+          }
+        }
+
+        // Phase 2: translate titles after fetch/ingest is fully completed.
+        for (const entry of translationQueue.values()) {
+          try {
+            const translated = await translateTitleForItem(entry.item, entry.sourceTitle);
+            if (translated) {
+              summary.itemsTranslated++;
+            }
+          } catch (e) {
+            const title = entry?.sourceTitle || entry?.item?.getField?.("title") || "(untitled)";
+            summary.errors.push("translate -> " + title + ": " + e.message);
+          }
+        }
+
+        if (summary.feedsFailed === 0) {
+          await cleanupStaleItems(seenSourceKeys, summary);
+        } else {
+          summary.cleanupSkipped = "feeds_failed";
+        }
+      } catch (e) {
+        log("Error in runNow: " + e);
+        summary.errors.push(e.message);
+        Zotero.logError(e);
+      }
+
+      summary.endTime = new Date().toISOString();
+      summary.retryQueueSize = loadRetryQueue().length;
+      updateSummaryData(summary);
+      return summary;
+    } finally {
+      _runInProgress = false;
+    }
   }
 
   function loadRetryQueue() {
@@ -1814,6 +1854,11 @@ var RSSDailyTranslator = {
 
     this.runNow = async function (window) {
       try {
+        if (isRunInProgress()) {
+          showFeedback(window, "已有任务在执行，请稍后再试", "warning");
+          return;
+        }
+
         showFeedback(window, "正在执行，请稍候...", "info");
         log("runNow called from prefs");
 
