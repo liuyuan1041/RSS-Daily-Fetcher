@@ -1,0 +1,126 @@
+<linkset>
+  <html:link rel="localization" href="chrome://rssdailytranslator/locale/addon.ftl" />
+</linkset>
+
+<!-- Action Buttons -->
+<groupbox>
+  <label>
+    <html:h2>RSS Daily Fetcher</html:h2>
+  </label>
+
+  <hbox align="center" style="margin-bottom: 10px;">
+    <button id="rssdaily-save-button" label="保存设置" oncommand="Zotero.RSSDailyTranslator.prefs.save(window)" />
+    <button id="rssdaily-run-now-button" label="立即运行" oncommand="Zotero.RSSDailyTranslator.prefs.runNow(window)" />
+    <button id="rssdaily-retry-button" label="重试队列" oncommand="Zotero.RSSDailyTranslator.prefs.retryNow(window)" />
+    <button id="rssdaily-reset-button" label="重置状态" oncommand="Zotero.RSSDailyTranslator.prefs.resetState(window)" />
+  </hbox>
+
+  <label id="rssdaily-feedback-label" style="color: #666; margin-bottom: 8px;">准备就绪</label>
+
+  <label id="rssdaily-last-summary-label" style="color: #666; white-space: pre-wrap; margin-bottom: 10px;">尚未运行</label>
+</groupbox>
+
+<!-- General Settings -->
+<groupbox>
+  <label>
+    <html:h2>常规设置</html:h2>
+  </label>
+
+  <checkbox id="zotero-prefpane-rssdaily-enabled" native="true" preference="extensions.zotero.rssdailytranslate.enabled"
+    label="启用自动调度" />
+
+  <hbox align="center">
+    <label value="调度间隔（分钟）" />
+    <html:input type="number" id="zotero-prefpane-rssdaily-scheduleMinutes"
+      preference="extensions.zotero.rssdailytranslate.scheduleMinutes" style="width: 80px;" />
+  </hbox>
+
+  <checkbox id="zotero-prefpane-rssdaily-cleanupEnabled" native="true"
+    preference="extensions.zotero.rssdailytranslate.cleanupEnabled" label="启用自动清理论文条目" />
+
+  <hbox align="center">
+    <label value="清理延迟（天）" />
+    <html:input type="number" id="zotero-prefpane-rssdaily-cleanupDelayDays"
+      preference="extensions.zotero.rssdailytranslate.cleanupDelayDays" min="1" step="1" style="width: 80px;" />
+  </hbox>
+
+  <hbox align="center">
+    <label value="目标父集合名称" />
+    <html:input type="text" id="zotero-prefpane-rssdaily-targetParentCollection"
+      preference="extensions.zotero.rssdailytranslate.targetParentCollection" style="flex: 1;" />
+  </hbox>
+
+  <checkbox id="zotero-prefpane-rssdaily-translateEnglishOnly" native="true"
+    preference="extensions.zotero.rssdailytranslate.translateEnglishOnly" label="仅翻译英文内容" />
+</groupbox>
+
+<!-- Translator Settings -->
+<groupbox>
+  <label>
+    <html:h2>翻译设置</html:h2>
+  </label>
+
+  <hbox align="center">
+    <label value="API 地址" />
+    <html:input type="text" id="zotero-prefpane-rssdaily-apiBase"
+      preference="extensions.zotero.rssdailytranslate.apiBase" style="flex: 1;" />
+  </hbox>
+
+  <hbox align="center">
+    <label value="API 密钥" />
+    <html:input type="password" id="zotero-prefpane-rssdaily-apiKey"
+      preference="extensions.zotero.rssdailytranslate.apiKey" style="flex: 1;" />
+  </hbox>
+
+  <hbox align="center">
+    <label value="模型名称" />
+    <html:input type="text" id="zotero-prefpane-rssdaily-model" preference="extensions.zotero.rssdailytranslate.model"
+      style="flex: 1;" />
+  </hbox>
+
+  <checkbox id="zotero-prefpane-rssdaily-preferFreeTranslate" native="true"
+    preference="extensions.zotero.rssdailytranslate.preferFreeTranslate" label="优先使用免费翻译 API（失败自动回退）" />
+
+  <hbox align="center">
+    <label value="Temperature" />
+    <html:input type="number" id="zotero-prefpane-rssdaily-temperature"
+      preference="extensions.zotero.rssdailytranslate.temperature" step="0.1" min="0" max="2" style="width: 80px;" />
+  </hbox>
+</groupbox>
+
+<!-- Retry and Cache Settings -->
+<groupbox>
+  <label>
+    <html:h2>重试与缓存</html:h2>
+  </label>
+
+  <hbox align="center">
+    <label value="最大重试次数" />
+    <html:input type="number" id="zotero-prefpane-rssdaily-retryMaxAttempts"
+      preference="extensions.zotero.rssdailytranslate.retryMaxAttempts" style="width: 80px;" />
+  </hbox>
+
+  <hbox align="center">
+    <label value="基础延迟时间（分钟）" />
+    <html:input type="number" id="zotero-prefpane-rssdaily-retryBaseMinutes"
+      preference="extensions.zotero.rssdailytranslate.retryBaseMinutes" style="width: 80px;" />
+  </hbox>
+
+  <hbox align="center">
+    <label value="缓存最大条目数" />
+    <html:input type="number" id="zotero-prefpane-rssdaily-cacheMaxEntries"
+      preference="extensions.zotero.rssdailytranslate.cacheMaxEntries" style="width: 80px;" />
+  </hbox>
+</groupbox>
+
+<!-- Feeds Settings -->
+<groupbox>
+  <label>
+    <html:h2>RSS 源列表</html:h2>
+  </label>
+
+  <label style="color: #666; margin-bottom: 5px;" value="每行一个 RSS 源地址" />
+
+  <html:textarea id="zotero-prefpane-rssdaily-feeds" preference="extensions.zotero.rssdailytranslate.feeds"
+    style="width: 100%; min-height: 200px; font-family: Consolas, monospace;" />
+</groupbox>

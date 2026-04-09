@@ -1,0 +1,19 @@
+// Default preferences for RSS Daily Translator
+pref("extensions.zotero.rssdailytranslate.enabled", true);
+pref("extensions.zotero.rssdailytranslate.scheduleMinutes", 180);
+pref("extensions.zotero.rssdailytranslate.cleanupEnabled", true);
+pref("extensions.zotero.rssdailytranslate.cleanupDelayDays", 3);
+pref("extensions.zotero.rssdailytranslate.targetParentCollection", "每日RSS论文");
+pref("extensions.zotero.rssdailytranslate.translateEnglishOnly", true);
+pref("extensions.zotero.rssdailytranslate.apiBase", "https://api.openai.com/v1");
+pref("extensions.zotero.rssdailytranslate.apiKey", "");
+pref("extensions.zotero.rssdailytranslate.model", "gpt-4o-mini");
+pref("extensions.zotero.rssdailytranslate.preferFreeTranslate", true);
+pref("extensions.zotero.rssdailytranslate.temperature", "0.2");
+pref("extensions.zotero.rssdailytranslate.retryMaxAttempts", 3);
+pref("extensions.zotero.rssdailytranslate.retryBaseMinutes", 5);
+pref("extensions.zotero.rssdailytranslate.cacheMaxEntries", 1000000);
+pref("extensions.zotero.rssdailytranslate.feeds", "https://ieeexplore.ieee.org/rss/TOC4609443.XML\nhttps://www.tandfonline.com/feed/rss/tgrs20");
+pref("extensions.zotero.rssdailytranslate.lastSummary", "");
+pref("extensions.zotero.rssdailytranslate.retryQueue", "[]");
+pref("extensions.zotero.rssdailytranslate.cleanupMissingMap", "{}");
