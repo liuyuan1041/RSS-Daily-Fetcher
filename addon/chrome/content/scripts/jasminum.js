@@ -719,14 +719,16 @@ var RSSDailyTranslator = {
 
     const targetLibraryID = parentCollection.libraryID;
 
-    const targetCollectionID = parentCollection.id || parentCollection.collectionID;
-    const existing = await findExistingItem(feedItem, targetLibraryID, targetCollectionID);
+    const parentCollectionID = parentCollection.id || parentCollection.collectionID;
+    const existing = await findExistingItem(feedItem, targetLibraryID, parentCollectionID);
     if (existing) {
       let updated = false;
 
-      const linked = await ensureItemInCollection(existing, parentCollection);
-      if (linked) {
-        updated = true;
+      if (runCollections?.includeExistingInRun) {
+        const linkedToRun = await ensureItemInRunCollection(existing, parentCollection, runCollections?.runCollection || null);
+        if (linkedToRun) {
+          updated = true;
+        }
       }
 
       const existingDOI = (existing.getField("DOI") || "").trim();
@@ -792,7 +794,6 @@ var RSSDailyTranslator = {
     }
 
     await item.saveTx();
-    await ensureItemInCollection(item, parentCollection);
     await ensureItemInRunCollection(item, parentCollection, runCollections?.runCollection || null);
     ensureManagedMetadata(item, feedItem);
     await item.saveTx();
@@ -979,12 +980,14 @@ var RSSDailyTranslator = {
       return null;
     }
 
+    const includeExistingInRun = !hasManagedRunCollectionsUnderParent(parentCollection);
+
     const runCollection = await getOrCreateChildCollection(parentCollection, getRunCollectionName(runStartedAt));
     if (!runCollection) {
-      return { parentCollection, runCollection: null };
+      return { parentCollection, runCollection: null, includeExistingInRun };
     }
 
-    return { parentCollection, runCollection };
+    return { parentCollection, runCollection, includeExistingInRun };
   }
 
   async function findExistingItem(feedItem, libraryID = null, collectionID = null) {
@@ -1027,7 +1030,7 @@ var RSSDailyTranslator = {
           if (!collectionID) {
             return true;
           }
-          return isItemInCollection(it, collectionID);
+          return isItemInParentHierarchy(it, collectionID);
         });
         if (sameLibrary) {
           return sameLibrary;
@@ -1039,7 +1042,7 @@ var RSSDailyTranslator = {
       libraries,
       "title",
       feedItem.title,
-      collectionID ? (it) => isItemInCollection(it, collectionID) : null
+      collectionID ? (it) => isItemInParentHierarchy(it, collectionID) : null
     );
     if (foundByTitleSearch) {
       return foundByTitleSearch;
@@ -1085,6 +1088,19 @@ var RSSDailyTranslator = {
     }
     const collections = item.getCollections();
     return Array.isArray(collections) && collections.includes(collectionID);
+  }
+
+  function isItemInParentHierarchy(item, parentCollectionID) {
+    if (!item || !parentCollectionID || typeof item.getCollections !== "function") {
+      return false;
+    }
+
+    const collections = item.getCollections();
+    if (!Array.isArray(collections) || collections.length === 0) {
+      return false;
+    }
+
+    return collections.some((collectionID) => isCollectionUnderParent(collectionID, parentCollectionID));
   }
 
   async function findExistingBySearch(libraries, field, value, predicate = null) {
@@ -1153,10 +1169,7 @@ var RSSDailyTranslator = {
     const cleanupDelayMs = cleanupDelayDays * 24 * 60 * 60 * 1000;
     const now = Date.now();
 
-    const rawChildren = typeof parentCollection.getChildItems === "function" ? parentCollection.getChildItems() : [];
-    const childItems = (rawChildren || [])
-      .map((it) => (typeof it === "number" ? Zotero.Items.get(it) : it))
-      .filter((it) => !!it);
+    const childItems = getManagedItemsInParentHierarchy(parentCollection);
 
     const missingMap = loadCleanupMissingMap();
     const managedKeys = new Set();
@@ -1282,12 +1295,15 @@ var RSSDailyTranslator = {
     if (!parentID) {
       return null;
     }
+    const parentIDNorm = String(parentID);
+    const childNameNorm = (childName || "").trim();
 
     const libraryID = parentCollection.libraryID;
     const collections = Zotero.Collections.getByLibrary(libraryID);
     for (const collection of collections) {
       const collectionParentID = collection.parentID || collection.parentCollectionID;
-      if (collection.name === childName && collectionParentID === parentID) {
+      const collectionParentIDNorm = collectionParentID ? String(collectionParentID) : "";
+      if ((collection.name || "").trim() === childNameNorm && collectionParentIDNorm === parentIDNorm) {
         return collection;
       }
     }
@@ -1306,9 +1322,10 @@ var RSSDailyTranslator = {
       return false;
     }
 
-    let currentID = collectionID;
+    const parentIDNorm = String(parentCollectionID);
+    let currentID = String(collectionID);
     while (currentID) {
-      if (currentID === parentCollectionID) {
+      if (currentID === parentIDNorm) {
         return true;
       }
 
@@ -1317,7 +1334,8 @@ var RSSDailyTranslator = {
         break;
       }
 
-      currentID = collection.parentID || collection.parentCollectionID || null;
+      const nextID = collection.parentID || collection.parentCollectionID || null;
+      currentID = nextID ? String(nextID) : null;
     }
 
     return false;
@@ -1427,6 +1445,38 @@ var RSSDailyTranslator = {
     return /^\d{8}-\d{4}$/.test(name);
   }
 
+  function hasManagedRunCollectionsUnderParent(parentCollection) {
+    if (!parentCollection) {
+      return false;
+    }
+
+    const parentID = parentCollection.id || parentCollection.collectionID;
+    if (!parentID) {
+      return false;
+    }
+
+    const libraryID = parentCollection.libraryID;
+    const collections = Zotero.Collections.getByLibrary(libraryID);
+
+    for (const collection of collections) {
+      const collectionID = collection.id || collection.collectionID;
+      if (!collectionID || collectionID === parentID) {
+        continue;
+      }
+
+      if (!isCollectionUnderParent(collectionID, parentID)) {
+        continue;
+      }
+
+      const name = (collection.name || "").trim();
+      if (isManagedGeneratedCollectionName(name)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   function isCollectionEffectivelyEmpty(collection) {
     if (!collection) {
       return true;
@@ -1439,6 +1489,55 @@ var RSSDailyTranslator = {
 
     const directItems = typeof collection.getChildItems === "function" ? collection.getChildItems() : [];
     return !Array.isArray(directItems) || directItems.length === 0;
+  }
+
+  function getManagedItemsInParentHierarchy(parentCollection) {
+    if (!parentCollection) {
+      return [];
+    }
+
+    const parentID = parentCollection.id || parentCollection.collectionID;
+    if (!parentID) {
+      return [];
+    }
+
+    const libraryID = parentCollection.libraryID;
+    const collections = Zotero.Collections.getByLibrary(libraryID);
+    const targetCollectionIDs = new Set([parentID]);
+
+    for (const collection of collections) {
+      const collectionID = collection.id || collection.collectionID;
+      if (!collectionID || collectionID === parentID) {
+        continue;
+      }
+
+      if (isCollectionUnderParent(collectionID, parentID)) {
+        targetCollectionIDs.add(collectionID);
+      }
+    }
+
+    const itemMap = new Map();
+    for (const collectionID of targetCollectionIDs) {
+      const collection = Zotero.Collections.get(collectionID);
+      if (!collection || typeof collection.getChildItems !== "function") {
+        continue;
+      }
+
+      const rawItems = collection.getChildItems() || [];
+      for (const raw of rawItems) {
+        const item = typeof raw === "number" ? Zotero.Items.get(raw) : raw;
+        if (!item) {
+          continue;
+        }
+
+        const itemID = item.id || item.itemID || item.key;
+        if (itemID) {
+          itemMap.set(itemID, item);
+        }
+      }
+    }
+
+    return Array.from(itemMap.values());
   }
 
   // ============ Translation ============
