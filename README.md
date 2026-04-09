@@ -130,5 +130,5 @@ WR:https://rss.sciencedirect.com/publication/science/00431354
 - <https://mp.weixin.qq.com/s/k1k9Ye0gtfpfdzOoLZ8XTw>
 - <https://mp.weixin.qq.com/s/sYsrNNFyYeW289Yj2bQEAg>
 - <https://mp.weixin.qq.com/s/I3GtOxY0wuY8X10-OCpYQA?scene=1&click_id=60>
-- <https://github.com/liuyuan1041/PaperStomach.git>
-- <https://github.com/liuyuan1041/zotero-gpt.git>
+- <https://github.com/MuiseDestiny/zotero-gpt.git>
+- <https://github.com/Star-Learning/PaperStomach.git>
