@@ -17,3 +17,4 @@ pref("extensions.zotero.rssdailytranslate.feeds", "https://ieeexplore.ieee.org/r
 pref("extensions.zotero.rssdailytranslate.lastSummary", "");
 pref("extensions.zotero.rssdailytranslate.retryQueue", "[]");
 pref("extensions.zotero.rssdailytranslate.cleanupMissingMap", "{}");
+pref("extensions.zotero.rssdailytranslate.initialBatchSeeded", false);

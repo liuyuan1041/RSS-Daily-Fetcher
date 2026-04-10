@@ -255,8 +255,9 @@ var RSSDailyTranslator = {
       const translationQueue = new Map();
       const seenSourceKeys = new Set();
 
+      let runCollections = null;
       try {
-        const runCollections = await prepareRunCollections(runStartedAt);
+        runCollections = await prepareRunCollections(runStartedAt);
         if (runCollections?.runCollection) {
           summary.newItemsCollection = runCollections.runCollection.name;
         }
@@ -341,6 +342,10 @@ var RSSDailyTranslator = {
         log("Error in runNow: " + e);
         summary.errors.push(e.message);
         Zotero.logError(e);
+      }
+
+      if (runCollections?.includeExistingInRun) {
+        setPref("initialBatchSeeded", true);
       }
 
       summary.endTime = new Date().toISOString();
@@ -1020,7 +1025,7 @@ var RSSDailyTranslator = {
       return null;
     }
 
-    const includeExistingInRun = !hasManagedRunCollectionsUnderParent(parentCollection);
+    const includeExistingInRun = !getPref("initialBatchSeeded", false);
 
     const runCollection = await getOrCreateChildCollection(parentCollection, getRunCollectionName(runStartedAt));
     if (!runCollection) {
@@ -1363,19 +1368,27 @@ var RSSDailyTranslator = {
     }
 
     const parentIDNorm = String(parentCollectionID);
-    let currentID = String(collectionID);
-    while (currentID) {
-      if (currentID === parentIDNorm) {
+    let currentIDRaw = collectionID;
+    while (currentIDRaw) {
+      const currentIDNorm = String(currentIDRaw);
+      if (currentIDNorm === parentIDNorm) {
         return true;
       }
 
-      const collection = Zotero.Collections.get(currentID);
+      let collection = Zotero.Collections.get(currentIDRaw);
+      if (!collection) {
+        const asNumber = Number(currentIDRaw);
+        if (Number.isFinite(asNumber) && asNumber > 0) {
+          collection = Zotero.Collections.get(asNumber);
+        }
+      }
+
       if (!collection) {
         break;
       }
 
       const nextID = collection.parentID || collection.parentCollectionID || null;
-      currentID = nextID ? String(nextID) : null;
+      currentIDRaw = nextID || null;
     }
 
     return false;
@@ -1904,6 +1917,7 @@ var RSSDailyTranslator = {
         setPref("feeds", "");
         setPref("retryQueue", "[]");
         setPref("cleanupMissingMap", "{}");
+        setPref("initialBatchSeeded", false);
 
         if (window && window.document) {
           const feedsInput = window.document.getElementById("zotero-prefpane-rssdaily-feeds");
